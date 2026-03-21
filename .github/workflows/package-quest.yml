@@ -1,0 +1,75 @@
+name: Package Quest APK
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      build_config:
+        description: 'Build configuration'
+        required: true
+        default: 'Development'
+        type: choice
+        options:
+          - Development
+          - Shipping
+
+# NOTE: This workflow requires a self-hosted runner with Unreal Engine 5.3+,
+# Android SDK (API 32+), Android NDK r25+, and Meta XR SDK installed.
+# It serves as a template — adjust paths for your build environment.
+
+jobs:
+  package-android:
+    name: Package Android APK for Meta Quest
+    runs-on: [self-hosted, unreal, android]
+
+    env:
+      UE5_ROOT: /opt/UnrealEngine
+      ANDROID_HOME: /opt/android-sdk
+      ANDROID_NDK_ROOT: /opt/android-ndk
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Validate project
+        run: |
+          python3 -c "import json; json.load(open('1984.uproject'))"
+          echo "Project file valid"
+
+      - name: Build and package for Android (Quest)
+        run: |
+          BUILD_CONFIG="${{ github.event.inputs.build_config || 'Development' }}"
+          echo "Building with config: ${BUILD_CONFIG}"
+
+          "${UE5_ROOT}/Engine/Build/BatchFiles/RunUAT.sh" \
+            BuildCookRun \
+            -project="${GITHUB_WORKSPACE}/1984.uproject" \
+            -noP4 \
+            -platform=Android \
+            -targetplatform=Android \
+            -clientconfig="${BUILD_CONFIG}" \
+            -build -cook -stage -pak -package \
+            -cookflavor=Multi \
+            -compressed \
+            -distribution \
+            -archive \
+            -archivedirectory="${GITHUB_WORKSPACE}/Build/Output"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 1984-quest-${{ github.sha }}
+          path: Build/Output/**/*.apk
+          retention-days: 30
+
+      - name: Upload OBB artifact (if exists)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 1984-quest-obb-${{ github.sha }}
+          path: Build/Output/**/*.obb
+          retention-days: 30
+          if-no-files-found: ignore
