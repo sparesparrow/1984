@@ -1,0 +1,46 @@
+{
+    "FileVersion": 3,
+    "EngineAssociation": "5.3",
+    "Category": "Game",
+    "Description": "1984: An immersive VR simulation based on George Orwell's Nineteen Eighty-Four. Educational serious game targeting Meta Quest.",
+    "Modules": [
+        {
+            "Name": "Project1984",
+            "Type": "Runtime",
+            "LoadingPhase": "Default",
+            "AdditionalDependencies": [
+                "Engine",
+                "HeadMountedDisplay",
+                "UMG"
+            ]
+        }
+    ],
+    "Plugins": [
+        {
+            "Name": "OpenXR",
+            "Enabled": true
+        },
+        {
+            "Name": "OpenXRHandTracking",
+            "Enabled": true
+        },
+        {
+            "Name": "MetaXR",
+            "Enabled": true,
+            "SupportedTargetPlatforms": [
+                "Android"
+            ]
+        },
+        {
+            "Name": "EnhancedInput",
+            "Enabled": true
+        },
+        {
+            "Name": "OnlineSubsystem",
+            "Enabled": true
+        }
+    ],
+    "TargetPlatforms": [
+        "Android"
+    ]
+}
