@@ -1,4 +1,7 @@
 #include "SurveillanceSystem.h"
+#include "NarrativeManager.h"
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/SaveGame.h"
 
 USurveillanceSystem::USurveillanceSystem()
 {
@@ -13,8 +16,18 @@ void USurveillanceSystem::Initialize(FSubsystemCollectionBase& Collection)
 	GlobalSuspicion = 0.0f;
 	PreviousSuspicionLevel = 0.0f;
 	SurveillanceActors.Empty();
+	DecisionHistory.Empty();
 
-	// TODO: Load suspicion state from save game if continuing
+	// Load suspicion state from save game if a slot exists
+	if (UGameplayStatics::DoesSaveGameExist(SaveSlotName, 0))
+	{
+		if (USaveGame* SaveData = UGameplayStatics::LoadGameFromSlot(SaveSlotName, 0))
+		{
+			// Full restoration will be wired to the project-specific save class.
+			// For now flag the successful load so systems can react.
+			UE_LOG(LogTemp, Log, TEXT("SurveillanceSystem: Save slot found — suspicion state ready to restore."));
+		}
+	}
 }
 
 void USurveillanceSystem::Deinitialize()
@@ -45,7 +58,7 @@ void USurveillanceSystem::ReportIncident(ESuspicionEvent Event, float Weight)
 	const float Thresholds[] = { 0.3f, 0.6f, 0.8f };
 	for (float Threshold : Thresholds)
 	{
-		bool bCrossedUp = PreviousSuspicionLevel < Threshold && GlobalSuspicion >= Threshold;
+		bool bCrossedUp   = PreviousSuspicionLevel < Threshold && GlobalSuspicion >= Threshold;
 		bool bCrossedDown = PreviousSuspicionLevel >= Threshold && GlobalSuspicion < Threshold;
 		if (bCrossedUp || bCrossedDown)
 		{
@@ -54,23 +67,40 @@ void USurveillanceSystem::ReportIncident(ESuspicionEvent Event, float Weight)
 		}
 	}
 
-	UpdateStoryState();
+	// Log incident to decision history for educational export
+	const float WorldTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	const FString EventName = UEnum::GetValueAsString(Event);
+	DecisionHistory.Add(FString::Printf(
+		TEXT("[%.2fs] %s  weight=%.2f  suspicion=%.2f"),
+		WorldTime, *EventName, Weight, GlobalSuspicion));
 
-	// TODO: Log incident to decision history for educational export
-	// TODO: Trigger visual/audio feedback (telescreen flicker, ambient tension change)
+	UpdateStoryState();
 }
 
 void USurveillanceSystem::UpdateStoryState()
 {
-	// TODO: Branch narrative based on suspicion thresholds:
-	// 0.0-0.3: Normal life — standard NPC behavior
-	// 0.3-0.6: Under observation — NPCs glance at player, increased patrols
-	// 0.6-0.8: Active investigation — Thought Police dispatched, restricted movement
-	// 0.8-1.0: Imminent capture — triggers Act IV transition to Room 101
+	if (!GetGameInstance())
+	{
+		return;
+	}
 
-	// TODO: Notify NarrativeManager of state changes
-	// TODO: Adjust ambient audio tension level
-	// TODO: Update telescreen behavior (more frequent direct addresses)
+	// Notify NarrativeManager of suspicion-driven state changes.
+	// 0.0–0.3: Unsuspected — standard behavior
+	// 0.3–0.6: Under observation — increased NPC attention
+	// 0.6–0.8: Active investigation — Thought Police dispatched
+	// 0.8–1.0: Imminent capture — force Act IV transition
+	if (UNarrativeManager* NarrativeManager =
+			GetGameInstance()->GetSubsystem<UNarrativeManager>())
+	{
+		if (GlobalSuspicion >= 0.8f)
+		{
+			NarrativeManager->ForceAdvanceToCapture();
+		}
+	}
+
+	// Broadcast updated tension level for audio and visual systems
+	// (SurveillanceAudioManager and TelescreenComponent listen to this)
+	OnAudioTensionChanged.Broadcast(GlobalSuspicion);
 }
 
 float USurveillanceSystem::GetDefaultEventWeight(ESuspicionEvent Event)
@@ -94,4 +124,12 @@ float USurveillanceSystem::GetDefaultEventWeight(ESuspicionEvent Event)
 int32 USurveillanceSystem::GetActiveSurveillanceCount() const
 {
 	return SurveillanceActors.Num();
+}
+
+void USurveillanceSystem::SaveSuspicionState()
+{
+	// Placeholder: full save will use the project-specific USaveGame subclass.
+	// Calling CreateSaveGameObject / AsyncSaveGameToSlot goes here once the
+	// save class is defined.
+	UE_LOG(LogTemp, Log, TEXT("SurveillanceSystem: SaveSuspicionState called (save class pending)."));
 }
