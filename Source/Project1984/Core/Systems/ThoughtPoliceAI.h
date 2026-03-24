@@ -58,6 +58,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "1984|ThoughtPolice")
 	float DetectionTime;
 
+	/** Distance within which the arrest is initiated */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "1984|ThoughtPolice")
+	float ArrestRange;
+
+	/** Patrol waypoint accept radius */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "1984|ThoughtPolice")
+	float WaypointAcceptRadius;
+
 	/** Set a new patrol route */
 	UFUNCTION(BlueprintCallable, Category = "1984|ThoughtPolice")
 	void SetPatrolRoute(const TArray<FVector>& PatrolPoints);
@@ -85,6 +93,19 @@ protected:
 	/** Time player has been continuously detected */
 	float ContinuousDetectionTime;
 
+	/** Time spent in Pursuing state without line-of-sight (resets patrol after timeout) */
+	float PursuitTimeWithoutSight;
+
+	/** Time spent in Observing state */
+	float ObservationElapsedTime;
+
+	/** True when a waypoint move command is in flight */
+	bool bWaypointMoveActive;
+
+	/** Cached subsystems — resolved in BeginPlay */
+	class USurveillanceSystem* SurveillanceSystem;
+	class UNarrativeManager*   NarrativeManager;
+
 	/** Execute patrol behavior */
 	void ExecutePatrol();
 
@@ -93,4 +114,10 @@ protected:
 
 	/** Execute pursuit behavior */
 	void ExecutePursuit();
+
+	/** Timer handle for patrol waypoint pause */
+	FTimerHandle WaypointPauseHandle;
+
+	/** Called after the waypoint pause expires to advance to the next waypoint */
+	void AdvanceToNextWaypoint();
 };

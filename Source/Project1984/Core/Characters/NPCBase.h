@@ -4,6 +4,8 @@
 #include "GameFramework/Character.h"
 #include "NPCBase.generated.h"
 
+class USurveillanceSystem;
+
 /**
  * NPC loyalty classification — determines reporting behavior
  */
@@ -50,6 +52,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|NPC")
 	bool bIsSuspicious;
 
+	/** Patrol waypoints set by the level designer */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "1984|NPC")
+	TArray<FVector> PatrolRoute;
+
 	/** Report player behavior to the SurveillanceSystem */
 	UFUNCTION(BlueprintCallable, Category = "1984|NPC")
 	void ReportPlayer();
@@ -59,9 +65,36 @@ public:
 	bool CanSeePlayer() const;
 
 protected:
+	/** Cached subsystem reference resolved in BeginPlay */
+	USurveillanceSystem* SurveillanceSystem;
+
+	/** Current patrol waypoint index */
+	int32 CurrentWaypointIndex;
+
+	/** Accept radius for waypoint arrival */
+	float WaypointAcceptRadius;
+
+	/** True while a move command is in flight */
+	bool bWaypointMoveActive;
+
+	/** Cooldown between citizen reports (prevents spam) */
+	float ReportCooldownRemaining;
+
+	/** Time the player has been in suspicious range (for threshold evaluation) */
+	float PlayerObservationTime;
+
+	FTimerHandle WaypointPauseTimer;
+	void AdvanceWaypoint();
+
 	/** Run patrol behavior */
 	virtual void ExecutePatrol();
 
 	/** Evaluate whether observed player behavior is suspicious */
-	virtual void EvaluatePlayerBehavior();
+	virtual void EvaluatePlayerBehavior(float DeltaTime);
+
+	/** Suspicion threshold to trigger a report — scaled by loyalty */
+	float GetReportThreshold() const;
+
+	/** Weight of this NPC's citizen report — scaled by loyalty */
+	float GetReportWeight() const;
 };

@@ -87,6 +87,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|Surveillance")
 	float GlobalSuspicion;
 
+	/** Decision history log for educational export */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|Surveillance")
+	TArray<FString> DecisionHistory;
+
 	/** Register a surveillance actor (telescreen, NPC, etc.) */
 	UFUNCTION(BlueprintCallable, Category = "1984|Surveillance")
 	void RegisterSurveillanceActor(AActor* Source);
@@ -111,11 +115,25 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "1984|Surveillance")
 	int32 GetActiveSurveillanceCount() const;
 
+	/** Get current suspicion level */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "1984|Surveillance")
+	float GetSuspicionLevel() const { return GlobalSuspicion; }
+
+	/** Save suspicion state to the designated save slot */
+	UFUNCTION(BlueprintCallable, Category = "1984|Surveillance")
+	void SaveSuspicionState();
+
 	/** Delegate broadcast when suspicion threshold changes */
 	DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnSuspicionThresholdChanged, float, NewLevel, float, OldLevel);
 
 	UPROPERTY(BlueprintAssignable, Category = "1984|Surveillance")
 	FOnSuspicionThresholdChanged OnSuspicionThresholdChanged;
+
+	/** Delegate broadcast when ambient audio tension level changes */
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnAudioTensionChanged, float, TensionLevel);
+
+	UPROPERTY(BlueprintAssignable, Category = "1984|Surveillance")
+	FOnAudioTensionChanged OnAudioTensionChanged;
 
 protected:
 	/** All registered surveillance sources in the current level */
@@ -124,4 +142,6 @@ protected:
 
 	/** Previous suspicion level for threshold change detection */
 	float PreviousSuspicionLevel;
+
+	static constexpr const TCHAR* SaveSlotName = TEXT("SurveillanceSave");
 };

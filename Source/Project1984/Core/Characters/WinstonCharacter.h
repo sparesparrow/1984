@@ -5,6 +5,8 @@
 #include "WinstonCharacter.generated.h"
 
 class USuspicionComponent;
+class USurveillanceSystem;
+class UNarrativeManager;
 
 /**
  * AWinstonCharacter
@@ -37,6 +39,14 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|Inventory")
 	bool bHasDiary;
 
+	/** Whether the player is currently inside a surveilled zone */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|State")
+	bool bIsUnderSurveillance;
+
+	/** Accumulated facial tension score for Quest Pro eye-tracking (0.0-1.0) */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|State")
+	float FacialTensionScore;
+
 	/** Begin diary writing interaction */
 	UFUNCTION(BlueprintCallable, Category = "1984|Interaction")
 	void StartDiaryWriting();
@@ -50,6 +60,12 @@ public:
 	bool IsBeingWatched() const;
 
 protected:
+	USurveillanceSystem* SurveillanceSystem;
+	UNarrativeManager*   NarrativeManager;
+
 	/** Check for nearby telescreens and surveillance actors */
 	void UpdateSurveillanceStatus();
+
+	/** Update Quest Pro facial tension heuristic (gaze aversion, blink rate) */
+	void UpdateFacialTension(float DeltaTime);
 };
