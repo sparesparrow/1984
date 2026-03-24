@@ -4,6 +4,9 @@
 #include "Components/ActorComponent.h"
 #include "TelescreenComponent.generated.h"
 
+class USurveillanceSystem;
+class USurveillanceAudioManager;
+
 /**
  * ETelescreenState
  *
@@ -59,6 +62,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|Telescreen")
 	bool bPlayerInView;
 
+	/** Seconds between TelescreenObservation reports when player is in view */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "1984|Telescreen")
+	float ObservationReportInterval;
+
 	/** Begin Two Minutes Hate broadcast */
 	UFUNCTION(BlueprintCallable, Category = "1984|Telescreen")
 	void StartTwoMinutesHate();
@@ -76,9 +83,31 @@ public:
 	bool IsPlayerVisible() const;
 
 protected:
+	/** Cached subsystems */
+	USurveillanceSystem*      SurveillanceSystem;
+	USurveillanceAudioManager* AudioManager;
+
+	/** Time since last TelescreenObservation report */
+	float ObservationTimer;
+
+	/** Time spent in Addressing state before returning to Broadcasting */
+	float AddressingTimer;
+
+	/** Whether the player participated in the Two Minutes Hate (fist/shout gesture) */
+	bool bParticipatedInHate;
+
+	/** Index into propaganda content rotation */
+	int32 PropagandaIndex;
+
+	/** Timer handle for auto-restoring obscured telescreen */
+	FTimerHandle RestoreTimerHandle;
+
+	/** Called by timer to restore the telescreen after obscuring */
+	void RestoreFromObscured();
+
 	/** Check surveillance coverage and report to SurveillanceSystem */
-	void UpdateSurveillance();
+	void UpdateSurveillance(float DeltaTime);
 
 	/** Update propaganda video playback */
-	void UpdateBroadcast();
+	void UpdateBroadcast(float DeltaTime);
 };
