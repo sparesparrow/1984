@@ -41,6 +41,8 @@ public:
 
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaTime) override;
+	virtual void OnPossess(APawn* InPawn) override;
+	virtual void OnUnPossess() override;
 
 	/** Current behavioral state */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|ThoughtPolice")

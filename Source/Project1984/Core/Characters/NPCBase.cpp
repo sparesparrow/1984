@@ -1,9 +1,13 @@
 #include "NPCBase.h"
 #include "Project1984/Core/Systems/SurveillanceSystem.h"
 #include "Project1984/Core/Characters/WinstonCharacter.h"
+#include "Project1984/Core/Utils/VisionConeUtils.h"
 #include "AIController.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
 
 ANPCBase::ANPCBase()
 {
@@ -24,33 +28,27 @@ void ANPCBase::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Resolve SurveillanceSystem
+	// Register as a surveillance source so SurveillanceSystem can count active watchers.
 	if (UGameInstance* GI = GetWorld() ? GetWorld()->GetGameInstance() : nullptr)
 	{
 		SurveillanceSystem = GI->GetSubsystem<USurveillanceSystem>();
+		if (SurveillanceSystem)
+		{
+			SurveillanceSystem->RegisterSurveillanceActor(this);
+		}
 	}
 
-	// Tune detection radius by loyalty classification
+	// Tune detection radius by loyalty classification — ThoughtPolice are hyper-vigilant.
 	switch (Loyalty)
 	{
-	case ENPCLoyalty::PartyFaithful:
-		DetectionRadius = 700.0f;
-		break;
-	case ENPCLoyalty::OuterParty:
-		DetectionRadius = 500.0f;
-		break;
-	case ENPCLoyalty::Prole:
-		DetectionRadius = 250.0f;
-		break;
-	case ENPCLoyalty::ThoughtPolice:
-		DetectionRadius = 1000.0f;
-		break;
+	case ENPCLoyalty::ThoughtPolice:  DetectionRadius = 800.0f; break;
+	case ENPCLoyalty::PartyFaithful:  DetectionRadius = 600.0f; break;
+	case ENPCLoyalty::OuterParty:     DetectionRadius = 400.0f; break;
+	case ENPCLoyalty::Prole:          DetectionRadius = 200.0f; break;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("NPCBase '%s': Initialized. Loyalty=%s DetectionRadius=%.0f"),
-		*GetName(),
-		*UEnum::GetValueAsString(Loyalty),
-		DetectionRadius);
+	UE_LOG(LogTemp, Log, TEXT("NPCBase '%s': Initialized. Loyalty=%d DetectionRadius=%.0f"),
+		*GetName(), static_cast<int32>(Loyalty), DetectionRadius);
 }
 
 void ANPCBase::Tick(float DeltaTime)
@@ -77,73 +75,41 @@ void ANPCBase::Tick(float DeltaTime)
 
 void ANPCBase::ReportPlayer()
 {
-	if (ReportCooldownRemaining > 0.0f || !SurveillanceSystem)
-	{
-		return;
-	}
+	if (ReportCooldownRemaining > 0.0f || !SurveillanceSystem) return;
 
 	const float Weight = GetReportWeight();
 	SurveillanceSystem->ReportIncident(ESuspicionEvent::CitizenReport, Weight);
 
-	bIsSuspicious             = true;
-	ReportCooldownRemaining   = 30.0f; // 30-second report cooldown per NPC
+	bIsSuspicious            = true;
+	ReportCooldownRemaining  = 30.0f; // 30-second report cooldown per NPC
 
 	UE_LOG(LogTemp, Warning,
-		TEXT("NPCBase '%s' (%s): Reported player — CitizenReport weight=%.2f"),
-		*GetName(), *UEnum::GetValueAsString(Loyalty), Weight);
+		TEXT("NPCBase '%s' (Loyalty=%d): Reported player — CitizenReport weight=%.2f"),
+		*GetName(), static_cast<int32>(Loyalty), Weight);
 }
 
 bool ANPCBase::CanSeePlayer() const
 {
+	// Proles rarely notice or care about Party rules.
+	if (Loyalty == ENPCLoyalty::Prole) return false;
+
 	APlayerController* PC = GetWorld()->GetFirstPlayerController();
-	if (!PC)
-	{
-		return false;
-	}
+	if (!PC) return false;
 
 	APawn* PlayerPawn = PC->GetPawn();
-	if (!PlayerPawn)
-	{
-		return false;
-	}
+	if (!PlayerPawn) return false;
 
-	const FVector MyLoc     = GetActorLocation();
-	const FVector PlayerLoc = PlayerPawn->GetActorLocation();
-	const float   Distance  = FVector::Dist(MyLoc, PlayerLoc);
-
-	if (Distance > DetectionRadius)
-	{
-		return false;
-	}
-
-	// Line-of-sight check — obstructions (walls, furniture) block NPC sight
-	FHitResult Hit;
-	FCollisionQueryParams Params;
-	Params.AddIgnoredActor(const_cast<ANPCBase*>(this));
-	Params.AddIgnoredActor(PlayerPawn);
-
-	const bool bBlocked = GetWorld()->LineTraceSingleByChannel(
-		Hit,
-		MyLoc + FVector(0.f, 0.f, 60.f),
-		PlayerLoc + FVector(0.f, 0.f, 60.f),
-		ECC_Visibility,
-		Params);
-
-	return !bBlocked;
+	// NPCs use a wide 180° forward half-space (90° half-angle) — alert but not camera-tight.
+	return UVisionConeUtils::IsActorInVisionCone(
+		this, PlayerPawn, /*ConeHalfAngleDeg=*/90.0f, DetectionRadius, /*bRequireLineOfSight=*/true);
 }
 
 void ANPCBase::ExecutePatrol()
 {
-	if (PatrolRoute.Num() == 0)
-	{
-		return;
-	}
+	if (PatrolRoute.Num() == 0) return;
 
 	AAIController* AIC = Cast<AAIController>(GetController());
-	if (!AIC)
-	{
-		return;
-	}
+	if (!AIC) return;
 
 	if (bWaypointMoveActive)
 	{
@@ -155,7 +121,7 @@ void ANPCBase::ExecutePatrol()
 			bWaypointMoveActive = false;
 			AIC->StopMovement();
 
-			// Pause 2 seconds at each waypoint before moving on
+			// Pause 2 seconds at each waypoint before moving on.
 			GetWorldTimerManager().SetTimer(
 				WaypointPauseTimer, this, &ANPCBase::AdvanceWaypoint, 2.0f, /*bLoop=*/false);
 		}
@@ -177,27 +143,22 @@ void ANPCBase::EvaluatePlayerBehavior(float DeltaTime)
 {
 	PlayerObservationTime += DeltaTime;
 
-	// Check WinstonCharacter state for suspicious actions
 	APawn* PlayerPawn = GetWorld()->GetFirstPlayerController()
 		? GetWorld()->GetFirstPlayerController()->GetPawn()
 		: nullptr;
 
 	AWinstonCharacter* Winston = Cast<AWinstonCharacter>(PlayerPawn);
-	if (!Winston)
-	{
-		return;
-	}
+	if (!Winston) return;
 
 	bool bPlayerSuspicious = false;
 
-	// Writing the diary is an immediately observable suspicious act
+	// Writing the diary is an immediately observable suspicious act.
 	if (Winston->bIsWritingDiary)
 	{
 		bPlayerSuspicious = true;
 	}
 
-	// Being in a restricted area is suspicious
-	// (zone actors tag the pawn directly; check the tag)
+	// Being in a restricted area is suspicious (zone actors tag the pawn).
 	if (PlayerPawn->ActorHasTag(FName("InRestrictedZone")))
 	{
 		bPlayerSuspicious = true;
@@ -205,30 +166,27 @@ void ANPCBase::EvaluatePlayerBehavior(float DeltaTime)
 
 	if (bPlayerSuspicious)
 	{
-		// Each loyalty tier has a different threshold before reporting
 		const float Threshold = GetReportThreshold();
 		if (PlayerObservationTime >= Threshold)
 		{
 			ReportPlayer();
-			PlayerObservationTime = 0.0f; // Reset after reporting
+			PlayerObservationTime = 0.0f;
 		}
 	}
 	else
 	{
-		// Innocent behavior — bleed observation time down
 		PlayerObservationTime = FMath::Max(0.0f, PlayerObservationTime - DeltaTime * 0.5f);
 	}
 }
 
 float ANPCBase::GetReportThreshold() const
 {
-	// How many seconds of suspicious observation before reporting
 	switch (Loyalty)
 	{
-	case ENPCLoyalty::PartyFaithful:  return 1.0f;  // Hyper-vigilant
-	case ENPCLoyalty::OuterParty:     return 3.0f;  // Moderately watchful
-	case ENPCLoyalty::Prole:          return 10.0f; // Mostly indifferent
-	case ENPCLoyalty::ThoughtPolice:  return 0.5f;  // Immediate detection
+	case ENPCLoyalty::ThoughtPolice:  return 0.5f;
+	case ENPCLoyalty::PartyFaithful:  return 1.0f;
+	case ENPCLoyalty::OuterParty:     return 3.0f;
+	case ENPCLoyalty::Prole:          return 10.0f;
 	}
 	return 5.0f;
 }
@@ -237,10 +195,10 @@ float ANPCBase::GetReportWeight() const
 {
 	switch (Loyalty)
 	{
+	case ENPCLoyalty::ThoughtPolice:  return 0.30f;
 	case ENPCLoyalty::PartyFaithful:  return 0.20f;
 	case ENPCLoyalty::OuterParty:     return 0.10f;
 	case ENPCLoyalty::Prole:          return 0.05f;
-	case ENPCLoyalty::ThoughtPolice:  return 0.30f;
 	}
 	return 0.10f;
 }
