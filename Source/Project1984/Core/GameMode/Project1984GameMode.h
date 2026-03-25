@@ -2,7 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "Project1984/Core/Systems/NarrativeManager.h"
 #include "Project1984GameMode.generated.h"
+
+class USurveillanceSystem;
+class UNarrativeManager;
 
 /**
  * AProject1984GameMode
@@ -43,6 +47,14 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "1984|State")
 	bool bPlayerCaptured;
 
+	/** Cached subsystem references resolved in InitializeSubsystems */
+	USurveillanceSystem* SurveillanceSystem;
+	UNarrativeManager*   NarrativeManager;
+
 	/** Initialize core game subsystems */
 	void InitializeSubsystems();
+
+	/** Bound to NarrativeManager::OnActChanged */
+	UFUNCTION()
+	void OnNarrativeActChanged(ENarrativeAct NewAct, ENarrativeAct PreviousAct);
 };
