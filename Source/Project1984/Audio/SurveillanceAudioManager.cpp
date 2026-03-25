@@ -1,10 +1,20 @@
 #include "SurveillanceAudioManager.h"
 #include "Project1984/Core/Systems/SurveillanceSystem.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
+#include "Sound/SoundBase.h"
 
 USurveillanceAudioManager::USurveillanceAudioManager()
 {
-	TensionLevel = EAudioTensionLevel::Calm;
+	TensionLevel      = EAudioTensionLevel::Calm;
+	CrossfadeProgress = 0.0f;
+	CrossfadeFrom     = EAudioTensionLevel::Calm;
+	CrossfadeTo       = EAudioTensionLevel::Calm;
+
+	TelescreenAudioComponent = nullptr;
+	HateAudioComponent       = nullptr;
+	ChestnutAudioComponent   = nullptr;
 }
 
 void USurveillanceAudioManager::Initialize(FSubsystemCollectionBase& Collection)
@@ -14,7 +24,7 @@ void USurveillanceAudioManager::Initialize(FSubsystemCollectionBase& Collection)
 	TensionLevel = EAudioTensionLevel::Calm;
 
 	// Bind to SurveillanceSystem::OnAudioTensionChanged so audio reacts
-	// automatically whenever suspicion crosses a threshold
+	// automatically whenever suspicion crosses a threshold.
 	if (UGameInstance* GI = GetGameInstance())
 	{
 		if (USurveillanceSystem* SS = GI->GetSubsystem<USurveillanceSystem>())
@@ -24,16 +34,19 @@ void USurveillanceAudioManager::Initialize(FSubsystemCollectionBase& Collection)
 		}
 	}
 
-	// Audio layer assets are loaded and started via Blueprint's BeginPlay
-	// (USoundCue assets assigned to Blueprint subclass UPROPERTY).
-	// Log the initial layer so the subsystem's state is visible in output.
+	// Prime the ambient component map with null entries so code paths can key safely.
+	for (uint8 Level = 0; Level <= static_cast<uint8>(EAudioTensionLevel::Room101); ++Level)
+	{
+		AmbientComponents.Add(Level, nullptr);
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("SurveillanceAudioManager: Initialized. Layer: %s"),
 		*GetLayerDescription(TensionLevel));
 }
 
 void USurveillanceAudioManager::Deinitialize()
 {
-	// Unbind delegate before destruction to avoid dangling references
+	// Unbind delegate before destruction to avoid dangling references.
 	if (UGameInstance* GI = GetGameInstance())
 	{
 		if (USurveillanceSystem* SS = GI->GetSubsystem<USurveillanceSystem>())
@@ -48,12 +61,11 @@ void USurveillanceAudioManager::Deinitialize()
 
 void USurveillanceAudioManager::SetTensionLevel(EAudioTensionLevel NewLevel)
 {
-	if (NewLevel != TensionLevel)
-	{
-		EAudioTensionLevel OldLevel = TensionLevel;
-		TensionLevel = NewLevel;
-		CrossfadeAmbientLayers(OldLevel, NewLevel);
-	}
+	if (NewLevel == TensionLevel) return;
+
+	const EAudioTensionLevel OldLevel = TensionLevel;
+	TensionLevel = NewLevel;
+	CrossfadeAmbientLayers(OldLevel, NewLevel);
 }
 
 void USurveillanceAudioManager::OnAudioTensionChanged(float TensionValue)
@@ -63,52 +75,48 @@ void USurveillanceAudioManager::OnAudioTensionChanged(float TensionValue)
 
 void USurveillanceAudioManager::PlayTelescreenAudio(FVector Location, const FString& BroadcastID)
 {
+	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+	if (!World) return;
+
+	// Stop any previous telescreen broadcast.
+	if (TelescreenAudioComponent && TelescreenAudioComponent->IsPlaying())
+	{
+		TelescreenAudioComponent->FadeOut(0.3f, 0.0f);
+	}
+
 	// Spatialized audio at the telescreen's world position.
 	// Blueprint subclass plays the relevant USoundAttenuation asset here.
-	// The BroadcastID selects which propaganda clip to use.
-	UE_LOG(LogTemp, Log,
-		TEXT("SurveillanceAudioManager: Telescreen broadcast '%s' at (%.0f,%.0f,%.0f)."),
+	UE_LOG(LogTemp, Verbose,
+		TEXT("SurveillanceAudioManager: Telescreen broadcast '%s' at (%.0f, %.0f, %.0f)."),
 		*BroadcastID, Location.X, Location.Y, Location.Z);
-
-	// When USoundBase assets are assigned in Blueprint:
-	// UGameplayStatics::PlaySoundAtLocation(GetWorld(), TelescreenSound, Location,
-	//     /*VolumeMultiplier=*/1.0f, /*PitchMultiplier=*/1.0f, /*StartTime=*/0.0f,
-	//     TelescreenAttenuation);
 }
 
 void USurveillanceAudioManager::StartTwoMinutesHateAudio()
 {
-	// Two Minutes Hate audio sequence:
-	//   Phase 1 (0-30s):  Goldstein's droning voice, dissonant strings
-	//   Phase 2 (30-60s): Crowd fury builds, rhythmic chanting
-	//   Phase 3 (60-90s): Climax — Big Brother theme over crowd ecstasy
-	//   Phase 4 (90-120s): Release — silence then normal broadcast
-	//
-	// Spatialized crowd audio is positioned around the player using
-	// ambisonic convolution reverb (Ambisonics plugin) for full spatial immersion.
+	// Two Minutes Hate audio sequence — force tension to Tense for the sequence.
+	SetTensionLevel(EAudioTensionLevel::Tense);
 
 	UE_LOG(LogTemp, Log,
 		TEXT("SurveillanceAudioManager: Two Minutes Hate audio STARTED."));
-
-	SetTensionLevel(EAudioTensionLevel::Tense);
 }
 
 void USurveillanceAudioManager::StopTwoMinutesHateAudio()
 {
+	if (HateAudioComponent && HateAudioComponent->IsPlaying())
+	{
+		HateAudioComponent->FadeOut(/*FadeOutDuration=*/2.0f, /*FadeVolumeLevel=*/0.0f);
+	}
+
+	// Return to the suspicion-appropriate ambient layer.
+	SetTensionLevel(EAudioTensionLevel::Calm);
+
 	UE_LOG(LogTemp, Log,
 		TEXT("SurveillanceAudioManager: Two Minutes Hate audio STOPPED. Returning to ambient."));
-
-	// Return to the suspicion-appropriate ambient layer
-	// (SurveillanceSystem delegate will re-evaluate the correct tension level)
 }
 
 void USurveillanceAudioManager::PlayChestnutTreeSong()
 {
 	// "Under the Spreading Chestnut Tree" — the melancholic song in Act V.
-	// Plays during the resolution/debrief sequence.
-	// Instrumentation: solo piano, slow tempo, minor key arrangement.
-	// Lyric subtitles are driven by the PropagandaHUD debrief screen.
-
 	UE_LOG(LogTemp, Log,
 		TEXT("SurveillanceAudioManager: Playing 'Under the Spreading Chestnut Tree' (Act V)."));
 
@@ -123,36 +131,68 @@ void USurveillanceAudioManager::SetRoom101Mode(bool bEnable)
 void USurveillanceAudioManager::UpdateAtmosphereFromSuspicion(float SuspicionLevel)
 {
 	EAudioTensionLevel NewLevel;
-	if (SuspicionLevel < 0.3f)       NewLevel = EAudioTensionLevel::Calm;
-	else if (SuspicionLevel < 0.6f)  NewLevel = EAudioTensionLevel::Uneasy;
-	else if (SuspicionLevel < 0.8f)  NewLevel = EAudioTensionLevel::Tense;
-	else                             NewLevel = EAudioTensionLevel::Danger;
+	if      (SuspicionLevel < 0.3f) NewLevel = EAudioTensionLevel::Calm;
+	else if (SuspicionLevel < 0.6f) NewLevel = EAudioTensionLevel::Uneasy;
+	else if (SuspicionLevel < 0.8f) NewLevel = EAudioTensionLevel::Tense;
+	else                            NewLevel = EAudioTensionLevel::Danger;
 
 	SetTensionLevel(NewLevel);
 }
 
 void USurveillanceAudioManager::CrossfadeAmbientLayers(EAudioTensionLevel FromLevel, EAudioTensionLevel ToLevel)
 {
-	// Crossfade duration: 2.5 seconds for smooth, unobtrusive transitions.
-	// Blueprint/Metasound side:
-	//   AmbientCalm.SetVolumeMultiplier(0.0, 2.5s)
-	//   AmbientTarget.SetVolumeMultiplier(1.0, 2.5s)
-	//
-	// Layer compositions:
-	//   Calm:   Room tone (50 Hz hum, ventilation), distant telescreen drone,
-	//           clock ticking, shuffle of feet outside
-	//   Uneasy: + low dissonant string drone (C# against D), occasional creak,
-	//             muffled footstep from floor above
-	//   Tense:  + anxious heartbeat (60 BPM), whispered voice fragments,
-	//             surveillance radio static bursts
-	//   Danger: + alarm-like sawtooth drone (100 Hz), boots marching on cobblestone,
-	//             Thought Police radio chatter, door slams
-	//   Room101:  Complete audio takeover — silence → isolation → fear stimulus
-	//             Triggered by Room 101 sequence; overrides all other layers
+	UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+	if (!World) return;
+
+	// Cancel any in-progress crossfade.
+	World->GetTimerManager().ClearTimer(CrossfadeTimerHandle);
+
+	CrossfadeFrom     = FromLevel;
+	CrossfadeTo       = ToLevel;
+	CrossfadeProgress = 0.0f;
+
+	// Activate the incoming layer at zero volume so we can fade it up.
+	UAudioComponent* IncomingComp = AmbientComponents.FindRef(static_cast<uint8>(ToLevel));
+	if (IncomingComp)
+	{
+		IncomingComp->SetVolumeMultiplier(0.0f);
+		if (!IncomingComp->IsPlaying()) IncomingComp->Play();
+	}
+
+	// Start the timer-based volume interpolation (20 Hz).
+	World->GetTimerManager().SetTimer(
+		CrossfadeTimerHandle,
+		this,
+		&USurveillanceAudioManager::TickCrossfade,
+		CrossfadeTickRate,
+		/*bLoop=*/true);
 
 	UE_LOG(LogTemp, Log,
-		TEXT("SurveillanceAudioManager: Crossfading audio %s -> %s (2.5s)."),
-		*GetLayerDescription(FromLevel), *GetLayerDescription(ToLevel));
+		TEXT("SurveillanceAudioManager: Crossfading audio %s -> %s (%.1fs)."),
+		*GetLayerDescription(FromLevel), *GetLayerDescription(ToLevel), CrossfadeDuration);
+}
+
+void USurveillanceAudioManager::TickCrossfade()
+{
+	CrossfadeProgress += CrossfadeTickRate / CrossfadeDuration;
+	CrossfadeProgress  = FMath::Clamp(CrossfadeProgress, 0.0f, 1.0f);
+
+	const float AlphaIn  = CrossfadeProgress;
+	const float AlphaOut = 1.0f - CrossfadeProgress;
+
+	UAudioComponent* OutComp = AmbientComponents.FindRef(static_cast<uint8>(CrossfadeFrom));
+	UAudioComponent* InComp  = AmbientComponents.FindRef(static_cast<uint8>(CrossfadeTo));
+
+	if (OutComp && OutComp->IsPlaying()) OutComp->SetVolumeMultiplier(AlphaOut);
+	if (InComp  && InComp->IsPlaying())  InComp->SetVolumeMultiplier(AlphaIn);
+
+	if (CrossfadeProgress >= 1.0f)
+	{
+		if (OutComp && OutComp->IsPlaying()) OutComp->Stop();
+
+		UWorld* World = GetGameInstance() ? GetGameInstance()->GetWorld() : nullptr;
+		if (World) World->GetTimerManager().ClearTimer(CrossfadeTimerHandle);
+	}
 }
 
 FString USurveillanceAudioManager::GetLayerDescription(EAudioTensionLevel Level)

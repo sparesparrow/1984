@@ -1,12 +1,18 @@
 #include "DoublethinkWidget.h"
 #include "Project1984/Core/Systems/SurveillanceSystem.h"
 #include "Project1984/Core/Systems/NarrativeManager.h"
+#include "Project1984/Core/Systems/SuspicionComponent.h"
+#include "Project1984/Core/GameMode/Project1984GameState.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
+#include "GameFramework/PlayerController.h"
+#include "GameFramework/Pawn.h"
 
 void UDoublethinkWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 
-	// Resolve subsystems via the owning player's game instance
+	// Resolve subsystems via the owning player's game instance.
 	UWorld* World = GetWorld();
 	if (World)
 	{
@@ -21,8 +27,7 @@ void UDoublethinkWidget::NativeConstruct()
 	bChoiceMade     = false;
 
 	UE_LOG(LogTemp, Log,
-		TEXT("DoublethinkWidget: Constructed — awaiting truth presentation. "
-		     "SS=%s NM=%s"),
+		TEXT("DoublethinkWidget: Constructed — awaiting truth presentation. SS=%s NM=%s"),
 		SurveillanceSystem ? TEXT("OK") : TEXT("null"),
 		NarrativeManager   ? TEXT("OK") : TEXT("null"));
 }
@@ -38,8 +43,6 @@ void UDoublethinkWidget::SetPartyTruth(const FString& PartyVersion)
 	UE_LOG(LogTemp, Log,
 		TEXT("DoublethinkWidget: Party truth (left hand) — \"%s\"  [red, bold, authoritative]"),
 		*PartyVersion);
-	// Blueprint: left-hand UWidgetComponent reads PartyTruth and renders in
-	// Ingsoc red with bold Ministry font.
 }
 
 void UDoublethinkWidget::SetHistoricalTruth(const FString& HistoricalVersion)
@@ -49,8 +52,6 @@ void UDoublethinkWidget::SetHistoricalTruth(const FString& HistoricalVersion)
 	UE_LOG(LogTemp, Log,
 		TEXT("DoublethinkWidget: Historical truth (right hand) — \"%s\"  [faded, handwritten, fragile]"),
 		*HistoricalVersion);
-	// Blueprint: right-hand widget renders in muted sepia, handwritten font,
-	// slightly transparent — representing suppressed memory.
 }
 
 void UDoublethinkWidget::SetDissonanceScore(float Score)
@@ -60,10 +61,7 @@ void UDoublethinkWidget::SetDissonanceScore(float Score)
 	UE_LOG(LogTemp, Log,
 		TEXT("DoublethinkWidget: Cognitive dissonance score = %.2f"), DissonanceScore);
 
-	// Blueprint: high dissonance triggers screen-edge distortion / chromatic
-	// aberration driven by the DissonanceScore property.
-
-	// High dissonance causes involuntary facial tells that telescreens can detect
+	// High dissonance causes involuntary facial tells that telescreens can detect.
 	if (DissonanceScore > 0.7f && SurveillanceSystem)
 	{
 		const float Weight =
@@ -91,7 +89,7 @@ void UDoublethinkWidget::AcceptPartyTruth()
 		TEXT("DoublethinkWidget: Player chose CONFORMITY — accepted Party truth \"%s\"."),
 		*PartyTruth);
 
-	// Conformity is orthodoxy: small suspicion reduction (same weight as attending hate)
+	// Conformity is orthodoxy: small suspicion reduction.
 	if (SurveillanceSystem)
 	{
 		SurveillanceSystem->ReportIncident(
@@ -99,13 +97,23 @@ void UDoublethinkWidget::AcceptPartyTruth()
 			USurveillanceSystem::GetDefaultEventWeight(ESuspicionEvent::AttendingTwoMinutesHate));
 	}
 
-	// Log conformity to decision history
-	if (SurveillanceSystem)
+	// Log conformity to decision history.
+	if (UWorld* World = GetWorld())
 	{
-		const float T = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-		SurveillanceSystem->DecisionHistory.Add(
-			FString::Printf(TEXT("[%.2fs] Doublethink — chose PARTY TRUTH: \"%s\""),
-				T, *PartyTruth));
+		if (AProject1984GameState* GS = World->GetGameState<AProject1984GameState>())
+		{
+			GS->RecordDecision(
+				FString::Printf(TEXT("Doublethink_%s"), *PartyTruth.Left(32)),
+				TEXT("AcceptedPartyTruth"));
+		}
+
+		if (SurveillanceSystem)
+		{
+			const float T = World->GetTimeSeconds();
+			SurveillanceSystem->DecisionHistory.Add(
+				FString::Printf(TEXT("[%.2fs] Doublethink — chose PARTY TRUTH: \"%s\""),
+					T, *PartyTruth));
+		}
 	}
 
 	OnDoublethinkChoice.Broadcast(TEXT("Party"), DissonanceScore);
@@ -120,26 +128,31 @@ void UDoublethinkWidget::AcceptHistoricalTruth()
 		TEXT("DoublethinkWidget: Player chose RESISTANCE — accepted historical truth \"%s\"."),
 		*HistoricalTruth);
 
-	// Rejecting Party truth is a thought crime — same weight as writing in the diary
+	// Rejecting Party truth is a thought crime.
 	if (SurveillanceSystem)
 	{
 		SurveillanceSystem->ReportIncident(
-			ESuspicionEvent::WritingDiary,
-			USurveillanceSystem::GetDefaultEventWeight(ESuspicionEvent::WritingDiary));
+			ESuspicionEvent::SpeakingOldspeak, 0.10f);
 	}
 
-	// Log resistance choice — contributes toward non-TotalCompliance ending
-	if (SurveillanceSystem)
+	// Log resistance choice — contributes toward non-TotalCompliance ending.
+	if (UWorld* World = GetWorld())
 	{
-		const float T = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-		SurveillanceSystem->DecisionHistory.Add(
-			FString::Printf(TEXT("[%.2fs] Doublethink — chose HISTORICAL TRUTH (resistance): \"%s\""),
-				T, *HistoricalTruth));
-	}
+		if (AProject1984GameState* GS = World->GetGameState<AProject1984GameState>())
+		{
+			GS->RecordDecision(
+				FString::Printf(TEXT("Doublethink_%s"), *PartyTruth.Left(32)),
+				TEXT("AcceptedHistoricalTruth"));
+		}
 
-	// Flag that the player has demonstrated inner resistance (helps DetermineEnding)
-	// The NarrativeManager's ending logic already checks bOBrienContacted and suspicion;
-	// here we also record the choice so Blueprint-driven events can react.
+		if (SurveillanceSystem)
+		{
+			const float T = World->GetTimeSeconds();
+			SurveillanceSystem->DecisionHistory.Add(
+				FString::Printf(TEXT("[%.2fs] Doublethink — chose HISTORICAL TRUTH (resistance): \"%s\""),
+					T, *HistoricalTruth));
+		}
+	}
 
 	OnDoublethinkChoice.Broadcast(TEXT("Historical"), DissonanceScore);
 }
@@ -152,7 +165,7 @@ void UDoublethinkWidget::AcceptBothTruths()
 	UE_LOG(LogTemp, Log,
 		TEXT("DoublethinkWidget: Player achieved TRUE DOUBLETHINK — holding both simultaneously."));
 
-	// Educational moment — explain the concept in the log (also feeds subtitle system)
+	// Educational moment — explain the concept in the log.
 	UE_LOG(LogTemp, Log,
 		TEXT("DoublethinkWidget: [Educational] "
 		     "Doublethink — the power of holding two contradictory beliefs, and accepting both. "
@@ -160,16 +173,27 @@ void UDoublethinkWidget::AcceptBothTruths()
 		     "The Party requires citizens to know the truth and simultaneously deny it. "
 		     "Real-world parallel: motivated reasoning and cognitive dissonance in closed societies."));
 
-	// True doublethink is the Party ideal — neither conformity nor resistance registers
-	// as suspicious; it is the expected state of an ideal citizen. No suspicion change.
-	if (SurveillanceSystem)
+	// True doublethink is the Party ideal — no suspicion change.
+	if (UWorld* World = GetWorld())
 	{
-		const float T = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
-		SurveillanceSystem->DecisionHistory.Add(
-			FString::Printf(
-				TEXT("[%.2fs] Doublethink — HELD BOTH TRUTHS simultaneously (true doublethink). "
-				     "Party: \"%s\" / Historical: \"%s\""),
-				T, *PartyTruth, *HistoricalTruth));
+		if (AProject1984GameState* GS = World->GetGameState<AProject1984GameState>())
+		{
+			// "Doublethink" keyword is intentionally NOT in the thoughtcrime list —
+			// the Party approves. But we record it so educators can discuss it.
+			GS->RecordDecision(
+				FString::Printf(TEXT("Doublethink_%s"), *PartyTruth.Left(32)),
+				TEXT("AcceptedBothTruths_Doublethink"));
+		}
+
+		if (SurveillanceSystem)
+		{
+			const float T = World->GetTimeSeconds();
+			SurveillanceSystem->DecisionHistory.Add(
+				FString::Printf(
+					TEXT("[%.2fs] Doublethink — HELD BOTH TRUTHS simultaneously (true doublethink). "
+					     "Party: \"%s\" / Historical: \"%s\""),
+					T, *PartyTruth, *HistoricalTruth));
+		}
 	}
 
 	OnDoublethinkChoice.Broadcast(TEXT("Doublethink"), DissonanceScore);
