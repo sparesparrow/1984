@@ -1,32 +1,59 @@
-name: Package Quest APK
+name: Package Meta Quest APK
+
+# Triggered manually, on GitHub Release publish, or on version tags.
+# Requires a self-hosted runner labelled 'ue5-android' with UE5.3+,
+# Android SDK (API 32+), NDK r25+, and Meta XR SDK installed.
 
 on:
   release:
-    types: [ published ]
+    types: [published]
   workflow_dispatch:
     inputs:
       build_config:
-        description: 'Build configuration'
+        description: Build configuration
         required: true
-        default: 'Development'
+        default: Development
         type: choice
         options:
           - Development
           - Shipping
-
-# NOTE: This workflow requires a self-hosted runner with Unreal Engine 5.3+,
-# Android SDK (API 32+), Android NDK r25+, and Meta XR SDK installed.
-# It serves as a template — adjust paths for your build environment.
+          - DebugGame
+      cook_flavor:
+        description: Android texture format
+        required: true
+        default: ASTC
+        type: choice
+        options:
+          - ASTC
+          - Multi
+      deploy_to_device:
+        description: ADB-deploy to connected Quest after packaging
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
   package-android:
-    name: Package Android APK for Meta Quest
-    runs-on: [self-hosted, unreal, android]
+    name: Package Android APK (${{ inputs.build_config || 'Shipping' }})
+    runs-on: [self-hosted, ue5-android]
+    timeout-minutes: 120
 
     env:
-      UE5_ROOT: /opt/UnrealEngine
-      ANDROID_HOME: /opt/android-sdk
-      ANDROID_NDK_ROOT: /opt/android-ndk
+      PROJECT_NAME: 1984
+      UPROJECT_PATH: ${{ github.workspace }}/1984.uproject
+      OUTPUT_DIR: ${{ github.workspace }}/Build/Android
+      # Set these as repository secrets or runner environment variables:
+      #   UE_ROOT      — e.g. /opt/UnrealEngine  or  ~/UnrealEngine
+      #   ANDROID_SDK_ROOT, ANDROID_NDK_ROOT, JAVA_HOME
+      UE_ROOT: ${{ secrets.UE_ROOT || '/opt/UnrealEngine' }}
+      ANDROID_SDK_ROOT: ${{ secrets.ANDROID_SDK_ROOT || '/opt/android-sdk' }}
+      ANDROID_NDK_ROOT: ${{ secrets.ANDROID_NDK_ROOT || '/opt/android-ndk' }}
+      JAVA_HOME: ${{ secrets.JAVA_HOME || '/usr/lib/jvm/java-11-openjdk-amd64' }}
+      BUILD_CONFIG: ${{ inputs.build_config || 'Shipping' }}
+      COOK_FLAVOR: ${{ inputs.cook_flavor || 'ASTC' }}
 
     steps:
       - name: Checkout repository
@@ -34,42 +61,105 @@ jobs:
         with:
           lfs: true
 
-      - name: Validate project
-        run: |
-          python3 -c "import json; json.load(open('1984.uproject'))"
-          echo "Project file valid"
+      - name: Restore Git LFS cache
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ runner.os }}-${{ hashFiles('**/.gitattributes') }}
+          restore-keys: lfs-${{ runner.os }}-
 
-      - name: Build and package for Android (Quest)
+      - name: Validate environment
         run: |
-          BUILD_CONFIG="${{ github.event.inputs.build_config || 'Development' }}"
-          echo "Building with config: ${BUILD_CONFIG}"
+          echo "=== Build environment ==="
+          echo "UE_ROOT:          $UE_ROOT"
+          echo "ANDROID_SDK_ROOT: $ANDROID_SDK_ROOT"
+          echo "BUILD_CONFIG:     $BUILD_CONFIG"
+          echo "COOK_FLAVOR:      $COOK_FLAVOR"
+          test -f "$UPROJECT_PATH"    || { echo "ERROR: .uproject not found"; exit 1; }
+          test -d "$UE_ROOT"          || { echo "ERROR: UE_ROOT not found: $UE_ROOT"; exit 1; }
+          test -d "$ANDROID_SDK_ROOT" || { echo "ERROR: ANDROID_SDK_ROOT not found"; exit 1; }
+          python3 -c "import json; json.load(open('$UPROJECT_PATH'))" \
+            && echo "OK: .uproject is valid JSON"
 
-          "${UE5_ROOT}/Engine/Build/BatchFiles/RunUAT.sh" \
-            BuildCookRun \
-            -project="${GITHUB_WORKSPACE}/1984.uproject" \
+      - name: Generate project files
+        run: |
+          "$UE_ROOT/GenerateProjectFiles.sh" \
+            -project="$UPROJECT_PATH" \
+            -game -engine
+
+      - name: Build editor modules (cook dependency)
+        run: |
+          "$UE_ROOT/Engine/Build/BatchFiles/Linux/Build.sh" \
+            "${PROJECT_NAME}Editor" \
+            Linux \
+            Development \
+            -Project="$UPROJECT_PATH" \
+            -WaitMutex
+
+      - name: Cook, build, stage, and package
+        run: |
+          "$UE_ROOT/Engine/Build/BatchFiles/RunUAT.sh" BuildCookRun \
+            -project="$UPROJECT_PATH" \
             -noP4 \
             -platform=Android \
             -targetplatform=Android \
-            -clientconfig="${BUILD_CONFIG}" \
-            -build -cook -stage -pak -package \
-            -cookflavor=Multi \
+            -clientconfig="$BUILD_CONFIG" \
+            -cook \
+            -build \
+            -stage \
+            -pak \
+            -package \
             -compressed \
-            -distribution \
+            -cookflavor="$COOK_FLAVOR" \
+            -archivedirectory="$OUTPUT_DIR" \
             -archive \
-            -archivedirectory="${GITHUB_WORKSPACE}/Build/Output"
+            -verbose
+
+      - name: Sign APK (Shipping / tag builds)
+        if: inputs.build_config == 'Shipping' || startsWith(github.ref, 'refs/tags/')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > /tmp/release.keystore
+          APK=$(find "$OUTPUT_DIR" -name "*.apk" | head -1)
+          echo "Signing: $APK"
+          "${ANDROID_SDK_ROOT}/build-tools/$(ls ${ANDROID_SDK_ROOT}/build-tools | tail -1)/apksigner" sign \
+            --ks /tmp/release.keystore \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --ks-key-alias "$KEY_ALIAS" \
+            "$APK"
+          rm -f /tmp/release.keystore
+
+      - name: Deploy to connected Quest (optional)
+        if: inputs.deploy_to_device == true
+        run: bash scripts/deploy-to-quest.sh
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 1984-quest-${{ github.sha }}
-          path: Build/Output/**/*.apk
+          name: 1984-quest-${{ inputs.build_config || 'Shipping' }}-${{ github.sha }}
+          path: |
+            ${{ env.OUTPUT_DIR }}/**/*.apk
+            ${{ env.OUTPUT_DIR }}/**/*.obb
           retention-days: 30
+          if-no-files-found: error
 
-      - name: Upload OBB artifact (if exists)
-        uses: actions/upload-artifact@v4
-        if: always()
+      - name: Create GitHub Release assets (tag builds only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
-          name: 1984-quest-obb-${{ github.sha }}
-          path: Build/Output/**/*.obb
-          retention-days: 30
-          if-no-files-found: ignore
+          files: ${{ env.OUTPUT_DIR }}/**/*.apk
+          body: |
+            ## 1984 VR — ${{ github.ref_name }}
+
+            Meta Quest APK (`${{ env.COOK_FLAVOR }}` textures, `${{ env.BUILD_CONFIG }}`).
+
+            ### Sideload
+            ```bash
+            adb install 1984-Android-Shipping.apk
+            ```
+            Or use [Meta Quest Developer Hub](https://developer.meta.com/horizon/downloads/).

@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Subsystems/GameInstanceSubsystem.h"
+#include "Components/AudioComponent.h"
 #include "SurveillanceAudioManager.generated.h"
 
 class USurveillanceSystem;
@@ -90,4 +91,30 @@ protected:
 
 	/** Crossfade between ambient audio layers */
 	void CrossfadeAmbientLayers(EAudioTensionLevel FromLevel, EAudioTensionLevel ToLevel);
+
+	/** Tick crossfade volume interpolation (called by timer) */
+	void TickCrossfade();
+
+private:
+	// One audio component per tension layer — only one plays at a time,
+	// but we keep them all alive to allow instant crossfade back.
+	UPROPERTY()
+	TMap<uint8, UAudioComponent*> AmbientComponents;
+
+	UPROPERTY()
+	UAudioComponent* TelescreenAudioComponent;
+
+	UPROPERTY()
+	UAudioComponent* HateAudioComponent;
+
+	UPROPERTY()
+	UAudioComponent* ChestnutAudioComponent;
+
+	// Crossfade state.
+	FTimerHandle        CrossfadeTimerHandle;
+	float               CrossfadeProgress;  // 0.0 → 1.0 over CrossfadeDuration
+	EAudioTensionLevel  CrossfadeFrom;
+	EAudioTensionLevel  CrossfadeTo;
+	static constexpr float CrossfadeDuration = 2.5f;  // seconds
+	static constexpr float CrossfadeTickRate = 0.05f; // 20 Hz
 };

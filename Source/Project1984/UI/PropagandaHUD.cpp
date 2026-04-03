@@ -1,10 +1,15 @@
 #include "PropagandaHUD.h"
 #include "Project1984/Core/Systems/SurveillanceSystem.h"
 #include "Project1984/Core/Systems/NarrativeManager.h"
+#include "Project1984/Core/GameMode/Project1984GameState.h"
 #include "Project1984/VR/TelescreenComponent.h"
+#include "Components/WidgetComponent.h"
+#include "Blueprint/UserWidget.h"
 #include "Kismet/GameplayStatics.h"
+#include "Engine/World.h"
+#include "Engine/GameInstance.h"
 
-// Act-aware propaganda content sets
+// Act-aware propaganda content sets.
 // Each act expands the set to reflect escalating Party pressure.
 namespace PropagandaContent
 {
@@ -17,7 +22,7 @@ namespace PropagandaContent
 		TEXT("OCEANIA HAS ALWAYS BEEN AT WAR WITH EASTASIA"),         // 5
 	};
 
-	// Per-act slogan pool sizes (cumulative — later acts include all prior slogans)
+	// Per-act slogan pool sizes (cumulative — later acts include all prior slogans).
 	static constexpr int32 ActSloganCounts[] = { 3, 4, 5, 6, 6 };
 
 	static int32 GetPoolSize(ENarrativeAct Act)
@@ -26,7 +31,7 @@ namespace PropagandaContent
 		return ActSloganCounts[Idx];
 	}
 
-	// Educational debrief endings
+	// Educational debrief endings.
 	struct FEndingInfo
 	{
 		const TCHAR* Type;
@@ -65,26 +70,26 @@ void APropagandaHUD::BeginPlay()
 {
 	Super::BeginPlay();
 
-	// Resolve subsystems
+	// Resolve subsystems.
 	if (UGameInstance* GI = GetGameInstance())
 	{
 		SurveillanceSystem = GI->GetSubsystem<USurveillanceSystem>();
 		NarrativeManager   = GI->GetSubsystem<UNarrativeManager>();
 	}
 
-	// Bind to suspicion threshold changes so we can update diegetic indicators
+	// Bind to suspicion threshold changes so we can update diegetic indicators.
 	if (SurveillanceSystem)
 	{
 		SurveillanceSystem->OnSuspicionThresholdChanged.AddDynamic(
 			this, &APropagandaHUD::OnSuspicionThresholdChanged);
 	}
 
-	// Start automatic slogan rotation every 20 seconds
+	// Start automatic slogan rotation every 20 seconds.
 	GetWorldTimerManager().SetTimer(
 		SloganRotationTimer, this, &APropagandaHUD::RotateSloganTick,
 		20.0f, /*bLoop=*/true, /*FirstDelay=*/5.0f);
 
-	// Show initial propaganda for the current act
+	// Show initial propaganda for the current act.
 	RefreshPropagandaContent();
 
 	UE_LOG(LogTemp, Log, TEXT("PropagandaHUD: Initialized. Slogan rotation active (20s interval)."));
@@ -99,9 +104,33 @@ void APropagandaHUD::DisplayPartySlogan(const FString& Slogan)
 	ActiveSlogan = Slogan;
 	OnSloganChanged.Broadcast(Slogan);
 
+	// Also push to world-space "PropagandaDisplay" actors via Blueprint event.
+	if (GetWorld())
+	{
+		TArray<AActor*> DisplayActors;
+		UGameplayStatics::GetAllActorsWithTag(GetWorld(), FName("PropagandaDisplay"), DisplayActors);
+
+		for (AActor* Actor : DisplayActors)
+		{
+			if (!Actor) continue;
+
+			TArray<UWidgetComponent*> WidgetComps;
+			Actor->GetComponents<UWidgetComponent>(WidgetComps);
+
+			for (UWidgetComponent* WC : WidgetComps)
+			{
+				if (!WC || !WC->GetUserWidgetObject()) continue;
+
+				if (UFunction* Func = WC->GetUserWidgetObject()->FindFunction(FName("SetSloganText")))
+				{
+					struct { FString Text; } Params{ Slogan };
+					WC->GetUserWidgetObject()->ProcessEvent(Func, &Params);
+				}
+			}
+		}
+	}
+
 	UE_LOG(LogTemp, Log, TEXT("PropagandaHUD: Broadcasting — \"%s\""), *Slogan);
-	// Blueprint-side: Party poster UTextRenderComponents / UWidgetComponents on
-	// poster actors bind to OnSloganChanged and update their text + typewriter anim.
 }
 
 void APropagandaHUD::UpdateSuspicionIndicator(float SuspicionLevel)
@@ -117,25 +146,26 @@ void APropagandaHUD::UpdateSuspicionIndicator(float SuspicionLevel)
 	{
 		UE_LOG(LogTemp, Log,
 			TEXT("PropagandaHUD: Suspicion %.2f — poster eyes TRACKING player aggressively."), SuspicionLevel);
-		// Blueprint poster actors enter 'tracking' state via OnSuspicionStateChanged
 	}
 	else if (SuspicionLevel < 0.8f)
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("PropagandaHUD: Suspicion %.2f — TELESCREEN EDGE TINT active. Thought Police alert zone."), SuspicionLevel);
-		// Blueprint: telescreen border post-process tints red at this threshold
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning,
 			TEXT("PropagandaHUD: Suspicion %.2f — DIRECT TELESCREEN WARNING. Imminent capture."), SuspicionLevel);
 
-		// Force all Broadcasting telescreens to switch to Addressing state (direct player confrontation)
-		for (TObjectIterator<UTelescreenComponent> It; It; ++It)
+		// Force all Broadcasting telescreens to switch to Addressing state.
+		if (GetWorld())
 		{
-			if (It->GetWorld() == GetWorld() && It->State == ETelescreenState::Broadcasting)
+			for (TObjectIterator<UTelescreenComponent> It; It; ++It)
 			{
-				It->State = ETelescreenState::Addressing;
+				if (It->GetWorld() == GetWorld() && It->State == ETelescreenState::Broadcasting)
+				{
+					It->State = ETelescreenState::Addressing;
+				}
 			}
 		}
 	}
@@ -150,9 +180,6 @@ void APropagandaHUD::ShowNewspeakChallenge(const FString& OldspeakPhrase, const 
 	UE_LOG(LogTemp, Log,
 		TEXT("PropagandaHUD: Newspeak challenge — Translate \"%s\" (expected: \"%s\")"),
 		*OldspeakPhrase, *ExpectedNewspeak);
-	// Blueprint: work terminal UWidgetComponent reads bNewspeakChallengeActive and
-	// NewspeakChallengeOldspeak to show the translation prompt. Input is handled
-	// by the NewSpeakProcessor via voice or keyboard.
 }
 
 void APropagandaHUD::HideNewspeakChallenge()
@@ -166,7 +193,7 @@ void APropagandaHUD::HideNewspeakChallenge()
 
 void APropagandaHUD::ShowDebriefScreen(const FString& EndingType, const FString& DecisionLogJSON)
 {
-	// Build formatted educational debrief text
+	// Build formatted educational debrief text.
 	FString DebriefText;
 
 	// --- Ending meaning ---
@@ -209,7 +236,7 @@ void APropagandaHUD::ShowDebriefScreen(const FString& EndingType, const FString&
 	DebriefText += TEXT("  4. What conditions allow ordinary citizens to become enforcers of an oppressive system?\n");
 	DebriefText += TEXT("  5. Is Winston's inner resistance meaningful even if it produces no external change?\n");
 
-	// Broadcast for Blueprint debrief screen UI actor
+	// Broadcast for Blueprint debrief screen UI actor.
 	OnShowDebrief.Broadcast(EndingType, DebriefText);
 
 	UE_LOG(LogTemp, Log, TEXT("PropagandaHUD: Educational debrief displayed.\n%s"), *DebriefText);
@@ -227,7 +254,7 @@ void APropagandaHUD::RefreshPropagandaContent()
 
 	const int32 PoolSize = PropagandaContent::GetPoolSize(Act);
 
-	// Clamp SloganIndex into the act's pool
+	// Clamp SloganIndex into the act's pool.
 	SloganIndex = SloganIndex % PoolSize;
 
 	const FString Slogan = FString(PropagandaContent::Slogans[SloganIndex]);
